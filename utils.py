@@ -1,6 +1,7 @@
 import chess
 import numpy as np
 import torch
+import random
 from move_vocab import MOVE2IDX
 
 def encode_fen_to_tensor(fen):
@@ -42,3 +43,37 @@ def encode_fen_to_tensor(fen):
 
     # return (1,18,8,8)
     return torch.from_numpy(arr).unsqueeze(0)
+
+
+IDX2MOVE = {v: k for k, v in MOVE2IDX.items()}
+
+def sample_move_from_probs(fen: str, probs: np.ndarray) -> str:
+    """
+    Given a FEN and a flat array of move‐probabilities (shape=(n_moves,)),
+    mask out illegal moves, renormalize, and sample one legal UCI string.
+    """
+    board = chess.Board(fen)
+    # list of legal ucis in this position
+    legal_ucis = [m.uci() for m in board.legal_moves]
+
+    # map each legal UCI → its index in the probs array,
+    # drop any that aren't in your vocabulary
+    legal_indices = [MOVE2IDX[uci] for uci in legal_ucis if uci in MOVE2IDX]
+
+    if not legal_indices:
+        # unexpected: no intersection between legal moves & vocab
+        return random.choice(legal_ucis)
+
+    # extract and renormalize their probabilities
+    legal_probs = np.array([probs[i] for i in legal_indices], dtype=np.float32)
+    total = legal_probs.sum()
+    if total > 0:
+        legal_probs /= total
+    else:
+        # network assigned zero mass to all legal moves → uniform fallback
+        legal_probs = np.ones_like(legal_probs) / len(legal_probs)
+
+    # sample one
+    choice = np.random.choice(len(legal_indices), p=legal_probs)
+    idx = legal_indices[choice]
+    return IDX2MOVE[idx]
